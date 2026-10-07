@@ -1,0 +1,7 @@
+{
+    "name": "starkinfra/issuing-balance-example",
+    "description": "Example: fetch your Stark Infra issuing balance",
+    "require": {
+        "starkinfra/sdk": "^0.17.0"
+    }
+}

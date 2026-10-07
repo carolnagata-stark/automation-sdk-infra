@@ -1,0 +1,12 @@
+{
+  "name": "starkinfra-issuing-balance-example",
+  "version": "1.0.0",
+  "description": "Example: fetch your Stark Infra issuing balance",
+  "main": "issuing_balance.js",
+  "scripts": {
+    "start": "node issuing_balance.js"
+  },
+  "dependencies": {
+    "starkinfra": "^0.20.0"
+  }
+}

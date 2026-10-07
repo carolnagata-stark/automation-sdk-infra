@@ -1,0 +1,147 @@
+name: sdk-tests-infra
+
+# One service per SDK language. Nothing is installed on the host: each service mounts
+# sdk/<language> as /workspace and runs the SDK's own toolchain inside the container.
+#
+#   docker compose run --rm python sh -c "pip install -q -r requirements.txt && python -m unittest tests.sdk.testIssuingBalance"
+#   docker compose run --rm node sh -c "npm install --silent && npx mocha tests/testIssuingBalance.js"
+#   docker compose run --rm go go test ./tests/sdk -run TestIssuingBalanceQuery -v
+#   docker compose run --rm java mvn test -Dtest=TestIssuingBalance
+#   docker compose run --rm elixir sh -c "mix local.hex --force && mix local.rebar --force && mix deps.get && mix test test/issuing_balance_test.exs"
+#   docker compose run --rm dotnet dotnet test StarkInfra/StarkInfraTests --filter FullyQualifiedName~IssuingBalanceTest
+#   docker compose run --rm clojure lein test :only starkinfra.issuing-balance-test
+#
+# The PHP runner has no per-test filter, so one test goes through a stdin bootstrap that sets
+# the user and includes the test file:
+#
+#   echo '<?php require "vendor/autoload.php"; \StarkInfra\Settings::setUser(new \StarkInfra\Project(["environment" => "sandbox", "id" => $_SERVER["SANDBOX_INFRA_ID"], "privateKey" => $_SERVER["SANDBOX_INFRA_PRIVATE_KEY"]])); include "tests/issuingBalance.php";' | docker compose run --rm -T php sh -c "composer install -q && php"
+#
+#   docker compose run --rm node sh        # interactive shell
+#
+# The named volumes keep each package cache between runs, so dependency download
+# happens once and not on every invocation.
+
+x-service: &service
+    working_dir: /workspace
+    init: true
+    stdin_open: true
+    tty: true
+    env_file:
+        - path: .env
+          required: false
+
+# Most infra SDK test helpers read SANDBOX_ID / SANDBOX_PRIVATE_KEY; .env holds SANDBOX_INFRA_*.
+# python, php and clojure read SANDBOX_INFRA_* directly and do not use this.
+x-project-credentials: &projectCredentials
+    SANDBOX_ID: ${SANDBOX_INFRA_ID:-}
+    SANDBOX_PRIVATE_KEY: ${SANDBOX_INFRA_PRIVATE_KEY:-}
+
+services:
+
+    dotnet:
+        <<: *service
+        image: mcr.microsoft.com/dotnet/sdk:8.0
+        environment:
+            <<: *projectCredentials
+            DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+            DOTNET_NOLOGO: "1"
+        volumes:
+            - ./sdk/dotnet:/workspace
+            - nuget:/root/.nuget/packages
+
+    elixir:
+        <<: *service
+        image: elixir:1.18-otp-27
+        environment:
+            <<: *projectCredentials
+        volumes:
+            - ./sdk/elixir:/workspace
+
+    # sdk/clojure is patched locally: its project.clj asks for com.starkinfra:starkcore 0.2.0,
+    # which is not published. The namespaces the code uses (core-clojure.*) come from Clojars as
+    # [org.clojars.stark-mtkgs/core-clojure "0.1.14-SNAPSHOT"]; re-apply after a fresh clone.
+    # The SDK itself is not on Clojars; the example needs it installed into the maven volume:
+    #   docker compose run --rm -e LEIN_SNAPSHOTS_IN_RELEASE=true clojure lein install
+    clojure:
+        <<: *service
+        image: clojure:temurin-21-lein
+        volumes:
+            - ./sdk/clojure:/workspace
+            - maven:/root/.m2
+
+    go:
+        <<: *service
+        image: golang:1.24
+        # tests/utils/user.go reads PROJECT_ID, PRIVATE_KEY and ORGANIZATION_ID, not SANDBOX_*.
+        environment:
+            PROJECT_ID: ${SANDBOX_INFRA_ID:-}
+            PRIVATE_KEY: ${SANDBOX_INFRA_PRIVATE_KEY:-}
+            ORGANIZATION_ID: ${SANDBOX_ORGANIZATION_ID:-}
+        volumes:
+            - ./sdk/go:/workspace
+            - gomod:/go/pkg/mod
+            - gobuild:/root/.cache/go-build
+
+    # Maven is the primary build (pom.xml); the repo also ships a Gradle wrapper,
+    # which runs on the same JDK.
+    java:
+        <<: *service
+        image: maven:3.9-eclipse-temurin-21
+        environment:
+            <<: *projectCredentials
+        volumes:
+            - ./sdk/java:/workspace
+            - maven:/root/.m2
+
+    node:
+        <<: *service
+        image: node:22
+        environment:
+            <<: *projectCredentials
+        volumes:
+            - ./sdk/node:/workspace
+            - npm:/root/.npm
+
+    # Built locally: the official php image ships without composer, gmp or zip, and
+    # the ECDSA signing falls back to a slow pure-PHP path without gmp.
+    php:
+        <<: *service
+        build:
+            context: ./docker
+            dockerfile: php.Dockerfile
+        image: sdk-tests-infra/php:8.3
+        volumes:
+            - ./sdk/php:/workspace
+            - composer:/composer
+
+    python:
+        <<: *service
+        image: python:3.12
+        environment:
+            PYTHONDONTWRITEBYTECODE: "1"
+        volumes:
+            - ./sdk/python:/workspace
+            - pip:/root/.cache/pip
+
+    # sdk/ruby: `bundle install` fails on jaro_winkler 1.5.4 (a rubocop dependency that does not
+    # compile on Ruby 3.3), and minitest is a development dependency too. Run it as in the header:
+    #
+    #   docker compose run --rm -e BUNDLE_WITHOUT=development ruby sh -c "bundle install -q && gem install minitest -v 5.14.4 --no-document -q && ruby -Itest -Ilib test/starkinfra/test_issuingbalance.rb"
+    ruby:
+        <<: *service
+        image: ruby:3.3
+        environment:
+            <<: *projectCredentials
+        volumes:
+            - ./sdk/ruby:/workspace
+            - bundle:/usr/local/bundle
+
+volumes:
+    nuget:
+    gomod:
+    gobuild:
+    maven:
+    npm:
+    composer:
+    pip:
+    bundle:

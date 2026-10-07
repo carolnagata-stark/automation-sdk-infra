@@ -1,0 +1,13 @@
+.DS_Store
+.env
+*.pem
+privateKey*
+
+# Each SDK is cloned into sdk/<language> and is its own git repository. The whole directory is
+# ignored: ignoring only its contents lets `git add .` register the clone as an embedded repo.
+sdk/*/
+
+# Build output of the client examples.
+examples/*/target/
+examples/*/bin/
+examples/*/obj/
